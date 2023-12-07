@@ -165,9 +165,22 @@ def read_hspice_data(hspice_content):
 
     return hspice_directives
 
-unsupported_parameters = {
-    "BCD"
+unsupported_mos_parameters = {
+    "CBS",
+    "CBD"
 }
+unrecognized_mos_parameters = {
+    "NLEV",
+    "IS",
+    "N",
+    "NDS",
+    "VNDS",
+    "FC",
+    "TT",
+    "PHP"
+}
+unsupported_mos_parameters = unsupported_mos_parameters.union(unrecognized_mos_parameters)
+
 
 def get_models_from_hspice_data(hspice_data: list[HspiceDirective]):
     models: list[Model] = list()
@@ -177,7 +190,7 @@ def get_models_from_hspice_data(hspice_data: list[HspiceDirective]):
             name = directive.parameter_list[0]
             category = directive.parameter_list[1]
 
-            parameters = {key: value for (key,value) in directive.parameter_dict.items() if key not in unsupported_parameters}
+            parameters = {key: value for (key,value) in directive.parameter_dict.items() if key not in unsupported_mos_parameters}
 
             models.append(Model(name, category, parameters))
 
