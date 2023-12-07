@@ -1,0 +1,4 @@
+* Test de modelo Hspice
+.MODEL MODN NMOS LEVEL=49
++MOBMOD =1.2 CAPMOD=1.80e+00
++NLEV   =0.0 NOIMOD = 2.9

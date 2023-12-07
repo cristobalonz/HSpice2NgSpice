@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import sys
 from pathlib import Path
 
@@ -35,13 +35,21 @@ def read_spectre_data(spectre_content):
 
 @dataclass
 class Model:
-    name: str
-    category: str   # C, R, M, X
-    parameters: list[str]
+    name: str = field(default="")
+    category: str = field(default="")
+    parameters: list[str] = field(default_factory=dict)
 
     def to_spectre(self):
         return f"model {self.name} {self.category} {' '.join(self.parameters)}"
 
+    def to_ngspice(self):
+        return f"model {self.name} {self.category} {' '.join([f'{key}={value}' for (key,value) in self.parameters.items()]) }"
+
+@dataclass
+class HspiceDirective:
+    instruction: str = field(default="")
+    parameter_list: list = field(default_factory=list)
+    parameter_dict: dict[str, str] = field(default_factory=dict)
 
 def get_models_from_spectre_data(spectre_data):
     models=list()
@@ -64,14 +72,14 @@ def main():
     global DEBUG
     spectre_content = """model nch mos1 type=n
     + vto=0.78 gamma=gamma_lib
-    
+
     + kp=2.0718e-5 phi=0.7
     + is=1e-14 tox=tox_material 
     + lambda=0.01u"""
 
     DEBUG=0
     spectre_data = read_spectre_data(spectre_content)
-    
+
     DEBUG=1
     models=get_models_from_spectre_data(spectre_data)
     print(models)
@@ -83,8 +91,8 @@ def main():
 def read_hspice_data(hspice_content):
     global DEBUG
     lines = hspice_content.split("\n")
-    hspice_data = list()
-    current_content = None
+    hspice_directives: list[HspiceDirective] = list()
+    current_directive = None
     # Store parameters as dictionaries
     parameters = dict()
 
@@ -109,22 +117,25 @@ def read_hspice_data(hspice_content):
             continue
 
         else:
-            hspice_data.append(list())
-            if DEBUG: debug_info("read_hspice_data", "data content")
-            current_content = hspice_data[-1]
+            hspice_directives.append(
+                HspiceDirective(instruction=splitted[0])
+            )
+            del splitted[0]
+
+            if DEBUG: debug_info("read_hspice_data", "hspice directive")
+            current_directive = hspice_directives[-1]
 
         indexes_to_delete = list()
-
         for i, field in enumerate(splitted):
             if not "=" in field:
                 continue
-            
+
             # This field has an =, but it may not be a complete pair
             key = None
             value = None
             if len(field) == 1:
                 key = splitted[i-1]
-                value = splited[i+1]
+                value = splitted[i+1]
                 indexes_to_delete.extend([i-1, i, i+1])
 
             elif field.startswith("="):
@@ -143,31 +154,32 @@ def read_hspice_data(hspice_content):
                 indexes_to_delete.extend([i])
 
             if DEBUG: debug_info("read_hspice_data", f"{key=} {value=}")
-            parameters[key] = value
+            current_directive.parameter_dict[key] = value
 
         # Delete fields used by parameters
         for i in reversed(indexes_to_delete):
             del splitted[i]
 
         if DEBUG: debug_info("read_hspice_data", f"stored: {splitted}")
-        current_content.extend(splitted)
+        current_directive.parameter_list.extend(splitted)
 
-    return hspice_data, parameters
+    return hspice_directives
 
+unsupported_parameters = {
+    "BCD"
+}
 
-def get_models_from_hspice_data(hspice_data):
-    models=list()
-    current_model=None
+def get_models_from_hspice_data(hspice_data: list[HspiceDirective]):
+    models: list[Model] = list()
 
-    for data in hspice_data:
-        ((command, *information), parameters) = data
+    for directive in hspice_data:
+        if directive.instruction.lower() == ".model":
+            name = directive.parameter_list[0]
+            category = directive.parameter_list[1]
 
-        if command.lower()=="model":
-            models.append(Model(
-                name=information[0],
-                category=information[1],
-                parameters=parameters
-            ))
+            parameters = {key: value for (key,value) in directive.parameter_dict.items() if key not in unsupported_parameters}
+
+            models.append(Model(name, category, parameters))
 
     return models
 
@@ -178,26 +190,39 @@ def main2(hspice_file: Path):
     hspice_content = hspice_file.read_text()
 
     DEBUG=0
-    data = read_hspice_data(hspice_content)
+    data: list[HspiceDirective] = read_hspice_data(hspice_content)
     print(data)
 
     DEBUG=1
-    models=get_models_from_hspice_data(data)
+    models: list[Model] = get_models_from_hspice_data(data)
 
     for model in models:
-        print(model.to_spectre())
+        print(model.to_ngspice())
+
+    for model in models:
+        output_dir = Path() / "pdk" / "fet"
+        print(f"{output_dir = }")
+
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True)
+
+        output_file = output_dir / f"{hspice_file.stem}.spice"
+        print(f"{output_file = }")
+
+        output_file.write_text(model.to_ngspice())
 
 if __name__ == "__main__":
-    #main()
 
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         print("Hspice model file not given")
         exit(-1)
 
-    hspice_file = Path(sys.argv[-1])
+    hspice_files = [Path(file) for file in sys.argv[1::]]
+    print (hspice_files)
 
-    if not hspice_file.exists():
-        print(f"Hspice file {hspice_file} doesn't exists!")
-        exit(-1)
+    for hspice_file in hspice_files:
+        if not hspice_file.exists():
+            print(f"Hspice file {hspice_file} doesn't exists!")
+            continue
 
-    main2(hspice_file)
+        main2(hspice_file)
