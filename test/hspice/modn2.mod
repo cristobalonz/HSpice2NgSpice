@@ -1,6 +1,6 @@
 .subckt nand x y out
-Mp1 out x vdd vdd P W=Wp L=Lmin
-+ PD='Wp + 6*Lmin' PS='Wp + 6*Lmin'
+Mp1 out x vdd vdd P W =Wp L= Lmin PD = 'Wp + 6*Lmin'
++ PS='Wp + 6*Lmin'
 + AD='3*Wp*Lmin' AS='3*Wp*Lmin'
 Mp2 out y vdd vdd P W=Wp L=Lmin
 + PD='Wp + 6*Lmin' PS='Wp + 6*Lmin'
