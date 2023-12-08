@@ -20,7 +20,7 @@ class Model:
         return f"model {self.name} {self.category} {' '.join(self.parameters)}"
 
     def to_ngspice(self):
-        return f"model {self.name} {self.category} {' '.join([f'{key}={value}' for (key,value) in self.parameters.items()]) }"
+        return f".model {self.name} {self.category} {' '.join([f'{key}={value}' for (key,value) in self.parameters.items()]) }"
 
 
 @dataclass
@@ -51,15 +51,25 @@ class HspiceDirective:
         return f"{directive}{name} {args} {kwargs}"
 
 
+    def to_model(self):
+        name = self.parameter_list[0]
+        category = self.parameter_list[1]
+        parameters = {key: value for (key,value) in self.parameter_dict.items() if key not in unsupported_mos_parameters}
+
+        return Model(name, category, parameters)
+
+
 @dataclass
 class Subcircuit:
     name: str
     ports: list[str] = field(default_factory=list)
+    parameter_dict: list[str] = field(default_factory=dict)
     devices: list[HspiceDirective] = field(default_factory=list)
 
     def to_ngspice(self):
-        port_declaration = " ".join(self.ports)
-        subcircuit_declaration = f".subckt {self.name} {port_declaration}"
+        ports  = ' '.join(self.ports)
+        kwargs = ' '.join([f'{key}=\'{value}\'' for (key,value) in self.parameter_dict.items()])
+        subcircuit_declaration = f".subckt {self.name} {ports} {kwargs}"
         circuit = '\n'.join(self.devices)
 
         return f"{subcircuit_declaration}\n{circuit}\n.ends"
@@ -199,22 +209,27 @@ unrecognized_mos_parameters = {
     "VNDS",
     "FC",
     "TT",
-    "PHP"
+    "PHP",
+    "XL",
+    "XW",
+    "ALPHA1",
+    "ACM",
+    "RD",
+    "RS",
+    "RDC",
+    "RSC",
+    "LDIF",
+    "WMLT",
+    "LMLT",
 }
 unsupported_mos_parameters = unsupported_mos_parameters.union(unrecognized_mos_parameters)
-
 
 def get_models_from_hspice_data(hspice_data: list[HspiceDirective]):
     models: list[Model] = list()
 
     for directive in hspice_data:
         if directive.is_model():
-            name = directive.parameter_list[0]
-            category = directive.parameter_list[1]
-
-            parameters = {key: value for (key,value) in directive.parameter_dict.items() if key not in unsupported_mos_parameters}
-
-            models.append(Model(name, category, parameters))
+            models.append(directive.to_model())
 
     return models
     
@@ -225,7 +240,8 @@ def get_subckt_from_hspice_data(hspice_data: list[HspiceDirective]):
     state = "out-subckt"
     current_circuit: Subcircuit | None = None
 
-    for directive in hspice_data:
+    directives_to_remove: list[int] = list()
+    for i, directive in enumerate(hspice_data):
 
         if state == "out-subckt":
             # We are outside a .subckt definition
@@ -236,17 +252,25 @@ def get_subckt_from_hspice_data(hspice_data: list[HspiceDirective]):
             subckts.append(current_circuit)
 
             current_circuit.ports = directive.parameter_list[1::]
-
+            current_circuit.parameter_dict = directive.parameter_dict
 
             state="in-subckt"
 
         elif state == "in-subckt":
             # We are inside a .subckt definition
             if directive.instruction == "ends":
-                state = "out-circuit"
+                state = "out-subckt"
                 continue
 
-            current_circuit.devices.append(directive.to_instance())
+            if directive.is_model():
+                current_circuit.devices.append(directive.to_model().to_ngspice())
+                directives_to_remove.append(i)
+            else:
+                current_circuit.devices.append(directive.to_instance())
+
+    # Remove some directives
+    for i in reversed(directives_to_remove):
+        del hspice_data[i]
 
     return subckts
 
@@ -284,6 +308,9 @@ def main2(hspice_file: Path):
     print(f"{output_file = }")
 
     with open(output_file, mode="w") as f:
+        f.write(f"** path: {hspice_file}")
+        f.write("\n")
+
         for subckt in subckts:
             f.write(subckt.to_ngspice())
             f.write("\n")
