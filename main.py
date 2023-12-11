@@ -72,7 +72,7 @@ class Subcircuit:
         subcircuit_declaration = f".subckt {self.name} {ports} {kwargs}"
         circuit = '\n'.join(self.devices)
 
-        return f"{subcircuit_declaration}\n{circuit}\n.ends"
+        return f"{subcircuit_declaration}\n{circuit}\n.ends {self.name}"
 
 
 def read_hspice_data(hspice_content: str):
@@ -234,19 +234,20 @@ def get_models_from_hspice_data(hspice_data: list[HspiceDirective]):
     return models
     
 
-def get_subckt_from_hspice_data(hspice_data: list[HspiceDirective]):
+def get_subckt_from_hspice_data(hspice_directives: list[HspiceDirective]):
     subckts: list[Subcircuit] = list()
 
     state = "out-subckt"
     current_circuit: Subcircuit | None = None
 
     directives_to_remove: list[int] = list()
-    for i, directive in enumerate(hspice_data):
+    for i, directive in enumerate(hspice_directives):
+        if DEBUG: debug_info("get_subckt_from_hspice_data", f"DIRECTIVE: {i}: {directive}")
 
         if state == "out-subckt":
-            # We are outside a .subckt definition
             if not directive.is_subckt():
                 continue
+            if DEBUG: debug_info("get_subckt_from_hspice_data", f"Detected subcircuit declaration")
 
             current_circuit = Subcircuit(name=directive.parameter_list[0])
             subckts.append(current_circuit)
@@ -254,23 +255,28 @@ def get_subckt_from_hspice_data(hspice_data: list[HspiceDirective]):
             current_circuit.ports = directive.parameter_list[1::]
             current_circuit.parameter_dict = directive.parameter_dict
 
+            # Each subckt directive should be removed
+            directives_to_remove.append(i)
             state="in-subckt"
 
         elif state == "in-subckt":
-            # We are inside a .subckt definition
+            # Each subckt directive should be removed
+            directives_to_remove.append(i)
+
             if directive.instruction == "ends":
                 state = "out-subckt"
                 continue
+            if DEBUG: debug_info("get_subckt_from_hspice_data", f"Ending subcircuit declaration")
 
             if directive.is_model():
                 current_circuit.devices.append(directive.to_model().to_ngspice())
-                directives_to_remove.append(i)
             else:
                 current_circuit.devices.append(directive.to_instance())
 
     # Remove some directives
+    if DEBUG: debug_info("get_subckt_from_hspice_data", f"directives to be removed: {directives_to_remove}")
     for i in reversed(directives_to_remove):
-        del hspice_data[i]
+        del hspice_directives[i]
 
     return subckts
 
@@ -287,9 +293,12 @@ def main2(hspice_file: Path):
     #     print(directive)
 
     DEBUG=1
-    models: list[Model] = get_models_from_hspice_data(data)
-
     subckts: list[Subcircuit] = get_subckt_from_hspice_data(data)
+    print("Data without subckts")
+    pprint(data)
+
+    DEBUG=0
+    models: list[Model] = get_models_from_hspice_data(data)
 
     # for model in models:
     #     print(model.to_ngspice())
